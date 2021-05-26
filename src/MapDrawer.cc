@@ -23,6 +23,8 @@
 #include "KeyFrame.h"
 #include <pangolin/pangolin.h>
 #include <mutex>
+#include<iostream>
+
 
 namespace ORB_SLAM2
 {
@@ -61,6 +63,8 @@ void MapDrawer::DrawMapPoints()
             continue;
         cv::Mat pos = vpMPs[i]->GetWorldPos();
         glVertex3f(pos.at<float>(0),pos.at<float>(1),pos.at<float>(2));
+        cout << "In mapdrawer: " << pos.at<float>(0) << pos.at<float>(1)<< pos.at<float>(2) << endl;
+
     }
     glEnd();
 

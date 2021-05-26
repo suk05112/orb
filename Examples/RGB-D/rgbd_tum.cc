@@ -18,23 +18,109 @@
 * along with ORB-SLAM2. If not, see <http://www.gnu.org/licenses/>.
 */
 
-
 #include<iostream>
 #include<algorithm>
 #include<fstream>
 #include<chrono>
-
 #include<opencv2/core/core.hpp>
-
+#include<opencv2/opencv.hpp>
 #include<System.h>
 
+#include<librealsense2/rs.hpp>  // Include RealSense Cross Platform API
+
+//#define UsingWebCam
+
 using namespace std;
+using namespace cv;
 
 void LoadImages(const string &strAssociationFilename, vector<string> &vstrImageFilenamesRGB,
                 vector<string> &vstrImageFilenamesD, vector<double> &vTimestamps);
 
 int main(int argc, char **argv)
 {
+#ifdef UsingWebCam
+    cout << "Start processing sequence ..." << endl;
+
+    if(argc != 3)
+    {
+        cerr << endl << "argc:" << argc << "!= 3"<< endl;
+        return -1;
+    }
+
+    // Declare RealSense pipeline, encapsulating the actual device and sensors
+
+    rs2::pipeline pipe;
+
+    rs2::config cfg;
+    cfg.enable_stream(RS2_STREAM_DEPTH);
+    cfg.enable_stream(RS2_STREAM_COLOR);
+
+
+    // Start streaming with default recommended configuration
+    pipe.start();
+
+    // Define two align objects. One will be used to align
+    // to depth viewport and the other to color.
+    // Creating align object is an expensive operation
+    // that should not be performed in the main loop
+    rs2::align align_to_color(RS2_STREAM_COLOR);
+
+    //const auto window_name = "Display Image";
+    //namedWindow(window_name,CV_WINDOW_AUTOSIZE);
+
+    // Create SLAM system. It initializes all system threads and gets ready to process frames.
+    ORB_SLAM2::System SLAM(argv[1],argv[2],ORB_SLAM2::System::RGBD,true);
+
+    cout << endl << "-------" << endl;
+    cout << "Start processing sequence ..." << endl;
+
+#ifdef COMPILEDWITHC11
+    std::chrono::steady_clock::time_point initT = std::chrono::steady_clock::now();
+#else
+    std::chrono::monotonic_clock::time_point initT = std::chrono::monotonic_clock::now();
+#endif
+
+    while(true)
+    {
+        rs2::frameset data = pipe.wait_for_frames(); // Wait for next set of frames from the camera
+        auto aligned_frames = align_to_color.process(data);
+
+        rs2::depth_frame depth = aligned_frames.get_depth_frame();
+        rs2::frame color = aligned_frames.get_color_frame();
+
+        const int w_depth = depth.get_width();
+        const int h_depth = depth.get_height();
+
+        const int w_img = color.as<rs2::video_frame>().get_width();
+        const int h_img = color.as<rs2::video_frame>().get_height();
+
+        // Create OpenCV matrix of size (w,h) from the colorized depth data
+        Mat imageDepth(Size(w_depth, h_depth), CV_16UC1, (void*)depth.get_data(), Mat::AUTO_STEP);
+        // Create OpenCV matrix of size (w,h) from the RGB image data
+        Mat imageRGB(Size(w_img, h_img), CV_8UC3, (void*)color.get_data(), Mat::AUTO_STEP);
+        cv::cvtColor(imageRGB,imageRGB,CV_BGR2RGB); // Convert BGR to RGB
+
+        // Resize imageRGB to make same width and height with image
+        cv::resize(imageDepth,imageDepth,Size(512,256));
+        cv::resize(imageRGB,imageRGB,Size(512,256));
+
+#ifdef COMPILEDWITHC11
+        std::chrono::steady_clock::time_point nowT = std::chrono::steady_clock::now();
+#else
+        std::chrono::monotonic_clock::time_point nowT = std::chrono::monotonic_clock::now();
+#endif
+        // Pass the image to the SLAM system
+        SLAM.TrackRGBD(imageRGB,imageDepth,std::chrono::duration_cast<std::chrono::duration<double> >(nowT-initT).count());
+    }
+
+    // Stop all threads
+    SLAM.Shutdown();
+
+    // Save camera trajectory
+    SLAM.SaveTrajectoryTUM("CameraTrajectory.txt");
+    SLAM.SaveKeyFrameTrajectoryTUM("KeyFrameTrajectory.txt");
+
+#else
     if(argc != 5)
     {
         cerr << endl << "Usage: ./rgbd_tum path_to_vocabulary path_to_settings path_to_sequence path_to_association" << endl;
@@ -134,7 +220,8 @@ int main(int argc, char **argv)
 
     // Save camera trajectory
     SLAM.SaveTrajectoryTUM("CameraTrajectory.txt");
-    SLAM.SaveKeyFrameTrajectoryTUM("KeyFrameTrajectory.txt");   
+    SLAM.SaveKeyFrameTrajectoryTUM("KeyFrameTrajectory.txt");
+#endif
 
     return 0;
 }
